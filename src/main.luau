@@ -109,24 +109,7 @@ local function glfwGetError(): (number, string)
     return code, ffi.readString(ptr)
 end
 
-local function glfwErrorCallback(error: number, descriptionPtr: buffer)
-    local description = ffi.readString(descriptionPtr)
-
-    print("GLFW Error:", error, description)
-
-    return
-end
-
-local function glfwWindowSizeCallback(window: number, width: number, height: number)
-    gl.Viewport(0, 0, width, height)
-end
-
-local glfwErrorCallbackPtr = ffi.newClosure(glfw.errorfun, glfwErrorCallback)
-local glfwWindowSizeCallbackPtr = ffi.newClosure(glfw.windowsizefun, glfwWindowSizeCallback)
-
 local function main()
-    -- glfw.SetErrorCallback(glfwErrorCallbackPtr)
-
     if (glfw.Init() == 0) then
         print("Failed to initialize GLFW:", glfwGetError())
         return false
@@ -136,7 +119,9 @@ local function main()
     glfw.WindowHint(glfw.CONTEXT_VERSION_MINOR, 3)
     glfw.WindowHint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
 
-    local window = glfw.CreateWindow(800, 600, "OpenGL in Luau", nil, nil)
+    local width = 800
+    local height = 600
+    local window = glfw.CreateWindow(width, height, "OpenGL in Luau", nil, nil)
     if (ffi.isNullPtr(window)) then
         print("Failed to create window:", glfwGetError())
         glfw.Terminate()
@@ -146,7 +131,6 @@ local function main()
     print(ffi.readString(glfw.GetVersionString()))
 
     glfw.MakeContextCurrent(window)
-    glfw.SetWindowSizeCallback(window, glfwWindowSizeCallbackPtr)
     glfw.SwapInterval(0)
 
     gl.LoadGL(glfw.GetProcAddress)
@@ -212,7 +196,9 @@ local function main()
 
     local fpsLog = table.create(60)
     local lastTime = os.clock()
-        
+
+    local widthBuffer, heightBuffer = buffer.create(csize.int), buffer.create(csize.int)
+    
     while (glfw.WindowShouldClose(window) == 0) do
         gl.Clear(gl.COLOR_BUFFER_BIT + gl.DEPTH_BUFFER_BIT)
 
@@ -258,6 +244,17 @@ local function main()
 
         glfw.SwapBuffers(window)
         glfw.PollEvents()
+
+        glfw.GetWindowSize(window, ffi.getRef(widthBuffer), ffi.getRef(heightBuffer))
+
+        local widthOld, heightOld = width, height
+
+        width = buffer.readi32(widthBuffer, 0)
+        height = buffer.readi32(heightBuffer, 0)
+
+        if (width ~= widthOld or height ~= heightOld) then
+            gl.Viewport(0, 0, width, height)
+        end
     end
 
     glfw.Terminate()
