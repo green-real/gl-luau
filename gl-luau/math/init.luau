@@ -52,7 +52,7 @@ local function mat4_matmul(a: buffer, b: buffer )
 	return buf
 end
 
-local glmath = {
+local gl_math = {
 	vec3 = {
 		new = vec3_new;
 	};
@@ -66,4 +66,4 @@ local glmath = {
 	};
 }
 
-return glmath
+return gl_math
