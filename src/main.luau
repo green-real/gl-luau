@@ -48,19 +48,32 @@ local function loadTexture(path: string)
 end
 
 local function checkProgramLinkStatus(program: number): boolean
-    local bLinked = buffer.create(csize.int)
-    gl.GetProgramiv(program, gl.LINK_STATUS, ffi.getRef(bLinked))
-    local linked = buffer.readi32(bLinked, 0);
-    if (linked == 0) then
-        local maxLength = buffer.create(csize.int)
-        gl.GetProgramiv(program, gl.INFO_LOG_LENGTH, ffi.getRef(maxLength))
+    local linked = buffer.create(csize.int)
+    gl.GetProgramiv(program, gl.LINK_STATUS, ffi.getRef(linked))
+    if (buffer.readi32(linked, 0) == 0) then
+        local logLength = buffer.create(csize.int)
+        gl.GetProgramiv(program, gl.INFO_LOG_LENGTH, ffi.getRef(logLength))
 
-        local infoLog = buffer.create(buffer.readi32(maxLength, 0))
-        gl.GetProgramInfoLog(program, buffer.readi32(maxLength, 0), ffi.getRef(maxLength), ffi.getRef(infoLog))
+        local infoLog = buffer.create(buffer.readi32(logLength, 0))
+        -- TODO: find out why this is crashing every single time...
+        -- gl.GetProgramInfoLog(shader, logLength, ffi.getRef(logLength), ffi.getRef(infoLog))
 
-        gl.DeleteProgram(program)
+        return false
+    end
 
-        error("Shader linking failed: " .. ffi.readString(infoLog))
+    return true
+end
+
+local function checkShaderCompileStatus(shader: number): boolean
+    local compiled = buffer.create(csize.int)
+    gl.GetShaderiv(shader, gl.COMPILE_STATUS, ffi.getRef(compiled))
+    if (buffer.readi32(compiled, 0) == 0) then
+        local logLength = buffer.create(csize.int)
+        gl.GetShaderiv(shader, gl.INFO_LOG_LENGTH, ffi.getRef(logLength))
+
+        local infoLog = buffer.create(buffer.readi32(logLength, 0))
+
+        return false
     end
 
     return true
@@ -80,20 +93,7 @@ local function createShader(path: string, type: number): buffer
     local shader = gl.CreateShader(type)
     gl.ShaderSource(shader, 1, sourcePtrPtr, lengthPtr)
     gl.CompileShader(shader)
-
-    local _compiled = buffer.create(csize.int)
-    gl.GetShaderiv(shader, gl.COMPILE_STATUS, ffi.getRef(_compiled))
-    local compiled = buffer.readi32(_compiled, 0)
-    if (compiled == 0) then
-        local logLength = buffer.create(csize.int)
-        gl.GetShaderiv(shader, gl.INFO_LOG_LENGTH, ffi.getRef(logLength))
-
-        local infoLog = buffer.create(buffer.readi32(logLength, 0))
-        -- TODO: find out why this is crashing every single time...
-        -- gl.GetShaderInfoLog(shader, logLength, ffi.getRef(logLength), ffi.getRef(infoLog))
-
-        return error("Failed to compile shader: " .. ffi.readString(infoLog))
-    end
+    assert(checkShaderCompileStatus(shader), "Failed to compile shader: " .. path)
 
     return shader
 end
@@ -131,7 +131,7 @@ local function main()
     print(ffi.readString(glfw.GetVersionString()))
 
     glfw.MakeContextCurrent(window)
-    glfw.SwapInterval(0)
+    glfw.SwapInterval(1)
 
     gl.LoadGL(glfw.GetProcAddress)
 
@@ -154,9 +154,8 @@ local function main()
         2, 3, 0
     })
 
-    local _vao = buffer.create(csize.uint)
-    gl.GenVertexArrays(1, ffi.getRef(_vao))
-    local vao = buffer.readu32(_vao, 0)
+    local vao = buffer.create(csize.uint)
+    gl.GenVertexArrays(1, ffi.getRef(vao))
     gl.BindVertexArray(vao)
 
     local buffers = buffer.create(csize.uint * 2)
@@ -180,7 +179,7 @@ local function main()
     gl.AttachShader(shaderProgram, vertexShader)
     gl.AttachShader(shaderProgram, fragmentShader)
     gl.LinkProgram(shaderProgram)
-    checkProgramLinkStatus(shaderProgram)
+    assert(checkProgramLinkStatus(shaderProgram), "Failed to link shader program")
 
     gl.UseProgram(shaderProgram)
 
@@ -194,10 +193,15 @@ local function main()
 
     local texture1Location = gl.GetUniformLocation(shaderProgram, "texture1"); assert(texture1Location ~= -1)
 
-    local fpsLog = table.create(60)
+    local fpsLog = table.create(120)
+    local fpsTotal = 0
     local lastTime = os.clock()
 
+    local titleBuffer = buffer.create(csize.uchar * 256)
+    local titleBufferRef = ffi.getRef(titleBuffer)
+
     local widthBuffer, heightBuffer = buffer.create(csize.int), buffer.create(csize.int)
+    local widthBufferRef, heightBufferRef = ffi.getRef(widthBuffer), ffi.getRef(heightBuffer)
     
     while (glfw.WindowShouldClose(window) == 0) do
         gl.Clear(gl.COLOR_BUFFER_BIT + gl.DEPTH_BUFFER_BIT)
@@ -205,18 +209,21 @@ local function main()
         -- update fps
         do
             local currentTime = os.clock()
-            local deltaTime = currentTime - lastTime
+            local fps = 1 / (currentTime - lastTime)
             lastTime = currentTime
 
-            table.insert(fpsLog, deltaTime)
-            if (#fpsLog > 500) then table.remove(fpsLog, 1) end
+            table.insert(fpsLog, fps)
+            fpsTotal += fps
+            if (#fpsLog > 120) then
+                fpsTotal -= table.remove(fpsLog, 1) :: number
+            end
 
-            local fps = 0
-            for _, v in ipairs(fpsLog) do fps = fps + v end
-            fps = 1 / (fps / #fpsLog)
-
-            glfw.SetWindowTitle(window, "OpenGL in Luau - FPS: " .. math.floor(fps))
+            local title = "OpenGL in Luau - FPS: " .. (fpsTotal // #fpsLog)
+            buffer.fill(titleBuffer, 0, 0)
+            buffer.writestring(titleBuffer, 0, title)
+            glfw.SetWindowTitle(window, titleBufferRef)
         end
+        
 
         -- update uniforms
         do
@@ -240,20 +247,27 @@ local function main()
             gl.Uniform1i(texture1Location, 0)
         end
 
-        gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, ffi.nullptr())
+        -- draw calls
+        do
+            gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, ffi.nullptr())
+        end
 
         glfw.SwapBuffers(window)
         glfw.PollEvents()
 
-        glfw.GetWindowSize(window, ffi.getRef(widthBuffer), ffi.getRef(heightBuffer))
+        -- update viewport size
+        do
+            glfw.GetWindowSize(window, widthBufferRef, heightBufferRef)
 
-        local widthOld, heightOld = width, height
+            local oldWidth = width
+            local oldHeight = height
 
-        width = buffer.readi32(widthBuffer, 0)
-        height = buffer.readi32(heightBuffer, 0)
+            width = buffer.readi32(widthBuffer, 0)
+            height = buffer.readi32(heightBuffer, 0)
 
-        if (width ~= widthOld or height ~= heightOld) then
-            gl.Viewport(0, 0, width, height)
+            if (width ~= oldWidth or height ~= oldHeight) then
+                gl.Viewport(0, 0, width, height)
+            end
         end
     end
 
