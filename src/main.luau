@@ -73,23 +73,26 @@ local function createShader(path: string, type: number): buffer
     local sourcePtr= ffi.getRef(source)
     local sourcePtrPtr = ffi.getRef(sourcePtr)
 
-    local shader: buffer = gl.CreateShader(type)
-    gl.ShaderSource(shader, 1, sourcePtrPtr, nil)
+    local length = buffer.create(csize.int)
+    buffer.writei32(length, 0, buffer.len(source))
+    local lengthPtr = ffi.getRef(length)
+
+    local shader = gl.CreateShader(type)
+    gl.ShaderSource(shader, 1, sourcePtrPtr, lengthPtr)
     gl.CompileShader(shader)
 
     local _compiled = buffer.create(csize.int)
     gl.GetShaderiv(shader, gl.COMPILE_STATUS, ffi.getRef(_compiled))
     local compiled = buffer.readi32(_compiled, 0)
     if (compiled == 0) then
-        local maxLength = buffer.create(csize.int)
-        gl.GetShaderiv(shader, gl.INFO_LOG_LENGTH, ffi.getRef(maxLength))
+        local logLength = buffer.create(csize.int)
+        gl.GetShaderiv(shader, gl.INFO_LOG_LENGTH, ffi.getRef(logLength))
 
-        local infoLog = buffer.create(buffer.readi32(maxLength, 0))
-        gl.GetShaderInfoLog(shader, buffer.readi32(maxLength, 0), ffi.getRef(maxLength), ffi.getRef(infoLog))
+        local infoLog = buffer.create(buffer.readi32(logLength, 0))
+        -- TODO: find out why this is crashing every single time...
+        -- gl.GetShaderInfoLog(shader, logLength, ffi.getRef(logLength), ffi.getRef(infoLog))
 
-        gl.DeleteShader(shader)
-
-        error("Shader compilation failed: " .. ffi.readString(infoLog))
+        return error("Failed to compile shader: " .. ffi.readString(infoLog))
     end
 
     return shader
@@ -122,7 +125,7 @@ local glfwErrorCallbackPtr = ffi.newClosure(glfw.errorfun, glfwErrorCallback)
 local glfwWindowSizeCallbackPtr = ffi.newClosure(glfw.windowsizefun, glfwWindowSizeCallback)
 
 local function main()
-    glfw.SetErrorCallback(glfwErrorCallbackPtr)
+    -- glfw.SetErrorCallback(glfwErrorCallbackPtr)
 
     if (glfw.Init() == 0) then
         print("Failed to initialize GLFW:", glfwGetError())
@@ -185,7 +188,7 @@ local function main()
     gl.VertexAttribPointer(0, 3, gl.FLOAT, 0, csize.float * 5, nil)
     gl.EnableVertexAttribArray(1)
     gl.VertexAttribPointer(1, 2, gl.FLOAT, 0, csize.float * 5, ffi.createRawPtr(3 * csize.float))
-
+    
     local vertexShader = createShader("./resources/shaders/tex.vert", gl.VERTEX_SHADER)
     local fragmentShader = createShader("./resources/shaders/tex.frag", gl.FRAGMENT_SHADER)
 
